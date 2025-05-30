@@ -1,5 +1,4 @@
 from random import randint
-import line_profiler
 
 class TileMap:
 	def __init__(self, rows:int, columns:int, modifiers:list['TileMap']=[], default_val:int=0):
@@ -11,7 +10,7 @@ class TileMap:
 
 	def get_neighbours(self, coordinates:tuple) -> list:
 		'''Returns a list of all valid orthagonally adjacent tiles'''
-		#Neighbours are up down left and right of the provided tile
+		#Neighbours are up, down, left, and right of the provided tile
 		#Checks if any of those positions would be out of bounds
 		x, y = coordinates[0:2]
 		neighbour_coords = []
@@ -47,11 +46,12 @@ class TileMap:
 	def add_modifier_layer(self, modifier:'TileMap'):
 		self.modifiers.append(modifier)
 
-	def remove_modifier_layer(self, index:int):
+	def remove_modifier_layer(self):
+		'''Removes the last added modifier'''
 		self.modifiers.pop()
 
 	def gen_modifier_layer(self, modifier_amount:int, num_tiles:int):
-		#Generate num_tiles many tiles at random positions with weights of modifier_amount
+		'''Generate num_tiles many tiles at random positions with weights of modifier_amount'''
 		for i in range(num_tiles):
 			x = randint(0, self.columns-1)
 			y = randint(0, self.rows-1)
@@ -86,57 +86,35 @@ class TileMap:
 				self.print_with_colour(self.get_weight((x, y)), bonus_colouring, x, y)
 			print('')
 
-def find_sub_array(conditions:list, arr:list) -> list[int]:
-	'''
-	Takes an array of conditions, where None will match anything, 
-	and returns all indices of the original arr that match the conditions 
-	'''
-	#conditions = [0, 1, None]  list of arrays = [[0, 1, 3], [2, 1, 3]])
-	#			  [0, 1, None]  <-- None is found at index 2
-	#Remove all occurences of index 2
-	#conditions = [0, 1]		list of arrays = [[0, 1]   , [2, 1]   ]
-	#Now check if/where conditions is included in list of arrays
-
-	#Create a list of indices wherever None is found in conditions
-	indices = []
-	for i, x in enumerate(conditions):
-		if x == None:
-			indices.append(i)
-
-	#Reverse the order as otherwise removing index 1 would shift index 2 down
-	indices.sort(reverse=True)
-	to_return = []
-	#Remove all instances of None from conditions
-	comparison_arr = list(filter(lambda x: x!=None, conditions))
-	cut_down_arr = arr
-	#Remove all values at the indices specified earlier
-	for index in indices:
-		cut_down_arr = list(map(lambda x: x[:index] + x[index+1:], cut_down_arr))
-	#Check if any cut_down sub_arrays match the comparison_array
-	for index, sub_arr in enumerate(cut_down_arr):
-		if sub_arr == comparison_arr:
-			#If so, then return the index of them
-			to_return.append(index)
-	
-	return to_return
-
-@line_profiler.profile
 def dijkstra(source:tuple, dest:tuple, tiles:'TileMap') -> list:
 	'''Given a source coordinate, a destination coordinate, and a TileMap, 
-	will spit out the minimum weight and the path that weight represents in the form of [weight, [list of coords]]'''
+	will spit out the minimum weight and the path that weight represents in the form of (weight, [list of coords])'''
+
 	def get_weight(node:tuple) -> int:
 		'''Returns the weight value of the node'''
-		return node[2]
+		return node[0]
+	
+	def get_index_of_occurences(match_val:'any', arr:list) -> list:
+		'''Return the position of match_val in arr if arr contains match_val, else return False'''
+		if match_val in arr:
+			return arr.index(match_val)
+		return False
 	
 	visited = []
-	#to_visit is an array where the contents are [(x, y, total_weight, predecessor)]
-	initial = [source[0], source[1], 0, []]
+	#to_visit is an array where the contents are [(x, y)]
+	#to_visit_weight_path is the node's other half: [weight, [path]]
+	
+	initial = source
+	#To visit represents the "priority queue" for Dijkstra's
 	to_visit = [initial]
+	to_visit_weight_path = [[0, []]]
 	while to_visit:
 		#Sort to force into backwards stack orientation based on weights, lowest last
-		to_visit.sort(key=get_weight, reverse=True)
+		to_visit_weight_path, to_visit = (list(item) for item in zip(*sorted(zip(to_visit_weight_path, to_visit), key=get_weight, reverse=True)))
+		#to_visit.sort(key=get_weight, reverse=True)
 		#Take the lowest weight node from the stack
 		current = to_visit.pop()
+		current_weight = to_visit_weight_path.pop()
 		#Add current node to list of visited nodes
 		visited.append(current)
 		#Gets the coordinates of all neighbours
@@ -144,25 +122,28 @@ def dijkstra(source:tuple, dest:tuple, tiles:'TileMap') -> list:
 		for neighbour in neighbours:
 			weight = tiles.get_weight(neighbour)
 			#If the current neighbour is the destination, return how we got there and how long it took
-			if neighbour[0] == dest[0] and neighbour[1] == dest[1]:
-				return current[2]+ weight, current[3] + [(current[0], current[1]), (dest[0], dest[1])]
+			if neighbour == dest:
+				return current_weight[0]+ weight, current_weight[1] + [current, dest]
 			#Check if current neighbour is already in the stack
-			matches = find_sub_array([neighbour[0], neighbour[1], None, None], to_visit)
+			matches = get_index_of_occurences(neighbour, to_visit)#find_sub_array([neighbour[0], neighbour[1], None, None], to_visit)
 			#Check if current neighbour has already been visited
-			has_visited = find_sub_array([neighbour[0], neighbour[1], None, None], visited)
+			has_visited = neighbour in visited #find_sub_array([neighbour[0], neighbour[1], None, None], visited)
+			#If neighbour already in the stack
 			if matches:
 				#If the weight in the stack is higher than the weight from current to the neighbour
-				if to_visit[matches[0]][2] > weight + current[2]:
+				if to_visit_weight_path[matches][0] > weight + current_weight[0]:
 					#Then replace the weight with the new weight
-					to_visit[matches[0]][2] = weight + current[2]
+					to_visit_weight_path[matches][0] = weight + current_weight[0]
 					#And set its path to current's path including current itself
-					to_visit[matches[0]][3] += current[3] + [(current[0], current[1])]
+					to_visit_weight_path[matches][1] += current_weight[1] + [current]
+			#If the neighbour is not in the stack
 			else:
+				#And the neighbour hasn't already been visited
 				if not has_visited:
-					#Add neighbour to stack
-					to_visit.append(
-						[neighbour[0], neighbour[1], weight+current[2], current[3] + [(current[0], current[1])]])
-			
+					#Add neighbour and weight to stack
+					to_visit.append(neighbour)
+					to_visit_weight_path.append([weight+current_weight[0], current_weight[1] + [current]])
+	#If all tiles have been searched and no path is found
 	return "no path found"
 
 def find_path(source:tuple, dest:tuple, tiles:TileMap):
@@ -170,18 +151,18 @@ def find_path(source:tuple, dest:tuple, tiles:TileMap):
 	return path
 
 #Width, Height
-map_size = (50, 50)
+map_size = (25, 25)
 
 #Create the main TileMap
 tiles = TileMap(map_size[0],map_size[1], default_val=1)
 
 #Create the random spattering of mountains
 mountains = TileMap(map_size[0],map_size[1])
-mountains.gen_modifier_layer(9998, 700)
+mountains.gen_modifier_layer(9998, 200)
 
 #Create the random spattering of forests
 forests = TileMap(map_size[0],map_size[1])
-forests.gen_modifier_layer(1, 600)
+forests.gen_modifier_layer(1, 300)
 
 #Overlay mountains and forests on top off the main TileMap
 tiles.add_modifier_layer(mountains)
@@ -196,28 +177,33 @@ while end == start:
 	end = (randint(0,map_size[0]-1), randint(0,map_size[1]-1))
 
 #Enable / Disable rain here
-rain_enabled = False#True
+rain_enabled = True
 
-if (not rain_enabled):
+#Don't do extra work if there's no rain
+if not rain_enabled:
 	path = find_path(start, end, tiles)
-
 	#Print the grid
 	tiles.print_table(path[1])
-
 	print(f'Starting at {start} and moving to {end} will take {path[0]} turns')
 
 else:
+	#Add a blank layer that is removed just to simplify the loop
 	tiles.add_modifier_layer(TileMap(map_size[0],map_size[1]))
 	final_path = []
 	while not start == end:
+		#Add current position to the final_path
 		final_path.append(start)
+		#Reset the rain grid to empty
 		rain = TileMap(map_size[0],map_size[1])
-		rain.gen_modifier_layer(2, 200)
+		#Generate x many new random rain tiles
+		rain.gen_modifier_layer(2, 80)
+		#Remove the current rain layer or the placeholder blank layer
 		tiles.remove_modifier_layer(-1)
+		#Add rain layer
 		tiles.add_modifier_layer(rain)
+		#Run Dijkstra's over the updated grid
 		path = find_path(start, end, tiles)
+		#Move one tile along the path
 		start = path[1][1]
-		tiles.print_table(path[1])
-		#input()
-		print('')
+	tiles.print_table(final_path)
 	print(final_path)
